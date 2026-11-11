@@ -1,1 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f766e">
+<title>SplitTab</title>
+<style>
+:root{--p:#0f766e;--bg:#f3f4f6;--c:#fff;--t:#111827;--m:#6b7280;--r:#dc2626;--g:#16a34a;--b:#e5e7eb}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:var(--p);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0;flex:1}
+header button{background:none;border:0;color:#fff;font-size:26px;padding:0 8px}
+main{padding:14px;max-width:560px;margin:auto;padding-bottom:90px}
+.card{background:var(--c);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+button,input,select{font:inherit}
+.btn{background:var(--p);color:#fff;border:0;border-radius:10px;padding:11px 16px;font-weight:600}
+.btn.sec{background:#e5e7eb;color:var(--t)}
+.btn.sm{padding:7px 12px;font-size:14px}
+.btn.red{background:var(--r)}
+.btn.wa{background:#25d366}
+.full{width:100%}
+input,select{width:100%;padding:11px;border:1px solid var(--b);border-radius:10px;margin:4px 0 10px;background:#fff}
+label{font-size:13px;color:var(--m)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.muted{color:var(--m);font-size:13px}
+.pos{color:var(--g);font-weight:600}
+.neg{color:var(--r);font-weight:600}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;padding:10px;border:0;border-radius:10px;background:#e5e7eb;font-weight:600}
+.tabs button.on{background:var(--p);color:#fff}
+.chk{display:flex;align-items:center;gap:8px;margin:6px 0}
+.chk input{width:auto;margin:0}
+.chk .amt{width:100px;margin:0 0 0 auto}
+.fab{position:fixed;right:16px;bottom:16px;border-radius:30px;padding:14px 20px;box-shadow:0 4px 10px rgba(0,0,0,.25)}
+</style>
+</head>
+<body>
+<header><button id="back" style="display:none">‹</button><h1 id="title">SplitTab</h1></header>
+<main id="app"></main>
+<script>
+const KEY='splittab_v1';
+const T={en:{app:'SplitTab',newGroup:'New group',groupName:'Group name',create:'Create',expenses:'Expenses',balances:'Balances',people:'People',addExpense:'Add expense',desc:'What was it for?',amount:'Amount',paidBy:'Paid by',splitWith:'Split between',equal:'Equally',exact:'Exact amounts',percent:'Percentages',save:'Save',cancel:'Cancel',settled:'All settled up!',owes:'owes',markPaid:'Mark as paid',remind:'Remind',addPerson:'Add person',name:'Name',currency:'Currency (e.g. USD, CFA, GHS)',noGroups:'No groups yet. Create your first one above.',noExp:'No expenses yet.',del:'Delete',paid:'paid',splitErr:'The split does not add up to the total.',needPeople:'Add at least 2 people first (People tab).',confirmDel:'Delete this?',payments:'Payments made',members:'people',inUse:'This person is used in expenses or payments.',fillAll:'Please fill in the description, amount and at least one person.',legend:'+ gets money back, - owes money',undo:'Undo',delGroup:'Delete group'}};
+let lang='en';
+const t=k=>(T[lang]&&T[lang][k])||T.en[k]||k;
+let S;
+try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!S||!S.groups)S={lastCur:'USD',groups:[]};
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+let gid=null,tab='exp',form=null;
+const $=id=>document.getElementById(id);
+const G=()=>S.groups.find(g=>g.id===gid);
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=(c,g)=>(c/100).toLocaleString(undefined,{maximumFractionDigits:2})+' '+esc(g.currency);
 
+function balances(g){
+ const n={};g.people.forEach(p=>n[p]=0);
+ g.expenses.forEach(e=>{n[e.paidBy]=(n[e.paidBy]||0)+e.amount;for(const p in e.shares)n[p]=(n[p]||0)-e.shares[p]});
+ g.payments.forEach(p=>{n[p.from]=(n[p.from]||0)+p.amount;n[p.to]=(n[p.to]||0)-p.amount});
+ return n}
+function simplify(n){
+ const d=[],c=[];
+ for(const p in n){if(n[p]<0)d.push({p,a:-n[p]});else if(n[p]>0)c.push({p,a:n[p]})}
+ const out=[];
+ while(d.length&&c.length){
+  d.sort((x,y)=>y.a-x.a);c.sort((x,y)=>y.a-x.a);
+  const m=Math.min(d[0].a,c[0].a);
+  out.push({from:d[0].p,to:c[0].p,amount:m});
+  d[0].a-=m;c[0].a-=m;
+  if(d[0].a===0)d.shift();
+  if(c[0].a===0)c.shift();
+ }
+ return out}
+
+function render(){
+ const g=G();
+ $('title').textContent=g?g.name:t('app');
+ $('back').style.display=g?'block':'none';
+ $('app').innerHTML=g?(form?expForm(g):groupView(g)):home();
+}
+function home(){
+ let h=`<div class="card"><label>${t('newGroup')}</label><input id="gn" placeholder="${t('groupName')}"><label>${t('currency')}</label><input id="gc" value="${esc(S.lastCur||'USD')}" maxlength="6"><button class="btn full" onclick="addGroup()">${t('create')}</button></div>`;
+ if(!S.groups.length)h+=`<p class="muted">${t('noGroups')}</p>`;
+ S.groups.forEach(g=>{h+=`<div class="card row" onclick="openG('${g.id}')"><div><b>${esc(g.name)}</b><div class="muted">${g.people.length} ${t('members')} · ${g.expenses.length} ${t('expenses')} · ${esc(g.currency)}</div></div><span>›</span></div>`});
+ return h}
+function groupView(g){
+ let h=`<div class="tabs">${[['exp','expenses'],['bal','balances'],['ppl','people']].map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="setTab('${k}')">${t(l)}</button>`).join('')}</div>`;
+ if(tab==='exp')h+=expList(g);else if(tab==='bal')h+=balView(g);else h+=pplView(g);
+ return h}
+function expList(g){
+ let h='';
+ if(!g.expenses.length)h+=`<p class="muted">${t('noExp')}</p>`;
+ [...g.expenses].reverse().forEach(e=>{
+  h+=`<div class="card"><div class="row"><b>${esc(e.desc)}</b><b>${fmt(e.amount,g)}</b></div><div class="muted">${esc(e.paidBy)} ${t('paid')} · ${new Date(e.date).toLocaleDateString()}</div><div class="row"><span></span><button class="btn sec sm" onclick="delExp('${e.id}')">${t('del')}</button></div></div>`});
+ h+=`<button class="btn fab" onclick="openForm()">+ ${t('addExpense')}</button>`;
+ return h}
+function balView(g){
+ const n=balances(g),tr=simplify(n);
+ let h='<div class="card">';
+ g.people.forEach(p=>{const v=n[p]||0;h+=`<div class="row"><span>${esc(p)}</span><span class="${v>0?'pos':v<0?'neg':'muted'}">${v>0?'+':''}${fmt(v,g)}</span></div>`});
+ h+=`<div class="muted" style="margin-top:8px">${t('legend')}</div></div>`;
+ if(!tr.length)h+=`<p class="muted">${t('settled')}</p>`;
+ tr.forEach((x,i)=>{
+  h+=`<div class="card"><div><b>${esc(x.from)}</b> ${t('owes')} <b>${esc(x.to)}</b></div><div class="neg" style="font-size:20px;margin:6px 0">${fmt(x.amount,g)}</div><div class="row"><button class="btn sm" onclick="pay(${i})">${t('markPaid')}</button><button class="btn wa sm" onclick="remind(${i})">${t('remind')}</button></div></div>`});
+ if(g.payments.length){
+  h+=`<h3 class="muted">${t('payments')}</h3>`;
+  [...g.payments].reverse().slice(0,10).forEach(p=>{h+=`<div class="card row"><span>${esc(p.from)} → ${esc(p.to)}<br><b>${fmt(p.amount,g)}</b></span><button class="btn sec sm" onclick="undoPay('${p.id}')">${t('undo')}</button></div>`})}
+ return h}
+function pplView(g){
+ let h=`<div class="card"><label>${t('name')}</label><input id="pn" placeholder="${t('name')}"><button class="btn full" onclick="addP()">${t('addPerson')}</button></div>`;
+ g.people.forEach((p,i)=>{h+=`<div class="card row"><span>${esc(p)}</span><button class="btn sec sm" onclick="delP(${i})">${t('del')}</button></div>`});
+ h+=`<button class="btn red full" onclick="delG()">${t('delGroup')}</button>`;
+ return h}
+function expForm(g){
+ const f=form;
+ let h=`<div class="card"><label>${t('desc')}</label><input value="${esc(f.desc)}" oninput="form.desc=this.value">
+ <label>${t('amount')} (${esc(g.currency)})</label><input type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}" oninput="form.amount=this.value">
+ <label>${t('paidBy')}</label><select onchange="form.paidBy=this.value">${g.people.map(p=>`<option ${p===f.paidBy?'selected':''}>${esc(p)}</option>`).join('')}</select>
+ <label>${t('splitWith')}</label><select onchange="form.type=this.value;render()">${['equal','exact','percent'].map(v=>`<option value="${v}" ${f.type===v?'selected':''}>${t(v)}</option>`).join('')}</select>`;
+ g.people.forEach((p,i)=>{
+  h+=`<div class="chk"><input type="checkbox" ${f.sel[p]?'checked':''} onchange="form.sel[G().people[${i}]]=this.checked;render()"><span>${esc(p)}</span>`;
+  if(f.type!=='equal'&&f.sel[p])h+=`<input class="amt" type="number" inputmode="decimal" step="any" placeholder="${f.type==='percent'?'%':''}" value="${esc(f.vals[p]||'')}" oninput="form.vals[G().people[${i}]]=this.value">`;
+  h+='</div>'});
+ h+=`<div class="row" style="margin-top:12px"><button class="btn sec" onclick="form=null;render()">${t('cancel')}</button><button class="btn" onclick="saveExp()">${t('save')}</button></div></div>`;
+ return h}
+
+function addGroup(){
+ const n=$('gn').value.trim(),c=$('gc').value.trim()||'USD';
+ if(!n)return;
+ S.lastCur=c;
+ const g={id:uid(),name:n,currency:c,people:[],expenses:[],payments:[]};
+ S.groups.push(g);save();gid=g.id;tab='ppl';render()}
+function openG(id){gid=id;tab='exp';render()}
+function setTab(k){tab=k;render()}
+$('back').onclick=()=>{if(form)form=null;else gid=null;render()};
+function addP(){
+ const g=G(),n=$('pn').value.trim();
+ if(!n||g.people.some(p=>p.toLowerCase()===n.toLowerCase()))return;
+ g.people.push(n);save();render()}
+function delP(i){
+ const g=G(),p=g.people[i];
+ if(g.expenses.some(e=>e.paidBy===p||p in e.shares)||g.payments.some(x=>x.from===p||x.to===p)){alert(t('inUse'));return}
+ g.people.splice(i,1);save();render()}
+function delG(){
+ if(!confirm(t('confirmDel')))return;
+ S.groups=S.groups.filter(g=>g.id!==gid);gid=null;save();render()}
+function delExp(id){
+ if(!confirm(t('confirmDel')))return;
+ const g=G();g.expenses=g.expenses.filter(e=>e.id!==id);save();render()}
+function undoPay(id){const g=G();g.payments=g.payments.filter(p=>p.id!==id);save();render()}
+function openForm(){
+ const g=G();
+ if(g.people.length<2){alert(t('needPeople'));return}
+ const sel={};g.people.forEach(p=>sel[p]=true);
+ form={desc:'',amount:'',paidBy:g.people[0],type:'equal',sel,vals:{}};render()}
+function saveExp(){
+ const g=G(),f=form;
+ const total=Math.round(parseFloat(f.amount)*100);
+ const ppl=g.people.filter(p=>f.sel[p]);
+ if(!f.desc.trim()||!(total>0)||!ppl.length){alert(t('fillAll'));return}
+ const sh={};
+ if(f.type==='equal'){
+  const b=Math.floor(total/ppl.length);let r=total-b*ppl.length;
+  ppl.forEach(p=>{sh[p]=b+(r-->0?1:0)});
+ }else if(f.type==='exact'){
+  let s=0;
+  ppl.forEach(p=>{sh[p]=Math.round((parseFloat(f.vals[p])||0)*100);s+=sh[p]});
+  if(s!==total){alert(t('splitErr'));return}
+ }else{
+  let sp=0;ppl.forEach(p=>sp+=parseFloat(f.vals[p])||0);
+  if(Math.abs(sp-100)>0.01){alert(t('splitErr'));return}
+  let s=0;
+  ppl.forEach(p=>{sh[p]=Math.floor(total*(parseFloat(f.vals[p])||0)/100);s+=sh[p]});
+  let r=total-s;
+  if(r<0)sh[ppl[0]]+=r;
+  for(let i=0;r>0;i=(i+1)%ppl.length,r--)sh[ppl[i]]++;
+ }
+ g.expenses.push({id:uid(),desc:f.desc.trim(),amount:total,paidBy:f.paidBy,shares:sh,date:Date.now()});
+ save();form=null;tab='exp';render()}
+function pay(i){
+ const g=G(),x=simplify(balances(g))[i];if(!x)return;
+ g.payments.push({id:uid(),from:x.from,to:x.to,amount:x.amount,date:Date.now()});
+ save();render()}
+function remind(i){
+ const g=G(),x=simplify(balances(g))[i];if(!x)return;
+ const a=(x.amount/100).toLocaleString(undefined,{maximumFractionDigits:2});
+ const m='Hi '+x.from+', a friendly reminder from the group "'+g.name+'": you owe '+x.to+' '+a+' '+g.currency+'. Thank you! (SplitTab)';
+ window.open('https://wa.me/?text='+encodeURIComponent(m),'_blank')}
+render();
+</script>
+</body>
+</html>
